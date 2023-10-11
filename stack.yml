@@ -1,0 +1,339 @@
+---
+  AWSTemplateFormatVersion: "2010-09-09"
+
+  Description: "Production VPC"
+  Parameters:
+    DBMasterUser:
+      Description: The administrative user for the database
+      Type: String
+    DBMasterPassword:
+      Description: The administrative user's password for the database
+      Type: String
+
+  Resources:
+
+    VPC:
+      Type: "AWS::EC2::VPC"
+      Properties:
+        EnableDnsSupport: "true"
+        EnableDnsHostnames: "true"
+        CidrBlock: "172.32.0.0/16"
+        Tags:
+          -
+            Key: "Application"
+            Value:
+              Ref: "AWS::StackName"
+          -
+            Key: "Network"
+            Value: "Public"
+
+    PublicSubnet:
+      Type: "AWS::EC2::Subnet"
+      Properties:
+        VpcId:
+          Ref: "VPC"
+        AvailabilityZone: "us-east-1a"
+        CidrBlock: "172.32.0.0/20"
+        MapPublicIpOnLaunch: "true"
+        Tags:
+          -
+            Key: "Application"
+            Value:
+              Ref: "AWS::StackName"
+          -
+            Key: "Network"
+            Value: "Public"
+          -
+            Key: "Name"
+            Value: "Public Subnet"
+
+    PrivateSubnet0:
+      Type: "AWS::EC2::Subnet"
+      Properties:
+        VpcId:
+          Ref: "VPC"
+        AvailabilityZone: "us-east-1b"
+        CidrBlock: "172.32.64.0/20"
+        Tags:
+          -
+            Key: "Application"
+            Value:
+              Ref: "AWS::StackName"
+          -
+            Key: "Network"
+            Value: "Private"
+          -
+            Key: "Name"
+            Value: "Private Subnet 0"
+
+    PrivateSubnet1:
+      Type: "AWS::EC2::Subnet"
+      Properties:
+        VpcId:
+          Ref: "VPC"
+        AvailabilityZone: "us-east-1c"
+        CidrBlock: "172.32.48.0/20"
+        Tags:
+          -
+            Key: "Application"
+            Value:
+              Ref: "AWS::StackName"
+          -
+            Key: "Network"
+            Value: "Private"
+          -
+            Key: "Name"
+            Value: "Private Subnet 1"
+
+    InternetGateway:
+      Type: "AWS::EC2::InternetGateway"
+      Properties:
+        Tags:
+          -
+            Key: "Application"
+            Value:
+              Ref: "AWS::StackName"
+          -
+            Key: "Network"
+            Value: "Public"
+          -
+            Key: "Name"
+            Value: "Public Internetgateway"
+
+    GatewayToInternet:
+      Type: "AWS::EC2::VPCGatewayAttachment"
+      Properties:
+        VpcId:
+          Ref: "VPC"
+        InternetGatewayId:
+          Ref: "InternetGateway"
+
+    PublicRouteTable:
+      Type: "AWS::EC2::RouteTable"
+      Properties:
+        VpcId:
+          Ref: "VPC"
+        Tags:
+          -
+            Key: "Application"
+            Value:
+              Ref: "AWS::StackName"
+          -
+            Key: "Network"
+            Value: "Public"
+          -
+            Key: "Name"
+            Value: "Public Route Table"
+
+    PublicRoute:
+      Type: "AWS::EC2::Route"
+      DependsOn: "GatewayToInternet"
+      Properties:
+        RouteTableId:
+          Ref: "PublicRouteTable"
+        DestinationCidrBlock: "0.0.0.0/0"
+        GatewayId:
+          Ref: "InternetGateway"
+
+    PublicSubnetRouteTableAssociation:
+      Type: "AWS::EC2::SubnetRouteTableAssociation"
+      Properties:
+        SubnetId:
+          Ref: "PublicSubnet"
+        RouteTableId:
+          Ref: "PublicRouteTable"
+
+    ElasticIP:
+      Type: "AWS::EC2::EIP"
+      Properties:
+        Domain: "vpc"
+
+    NATGateway:
+      Type: "AWS::EC2::NatGateway"
+      Properties:
+        AllocationId:
+          Fn::GetAtt:
+            - "ElasticIP"
+            - "AllocationId"
+        SubnetId:
+          Ref: "PublicSubnet"
+
+    PrivateRouteTable:
+      Type: "AWS::EC2::RouteTable"
+      Properties:
+        VpcId:
+          Ref: "VPC"
+        Tags:
+          -
+            Key: "Name"
+            Value: "Private Route Table"
+
+    PrivateRouteToInternet:
+      Type: "AWS::EC2::Route"
+      Properties:
+        RouteTableId:
+          Ref: "PrivateRouteTable"
+        DestinationCidrBlock: "0.0.0.0/0"
+        NatGatewayId:
+          Ref: "NATGateway"
+
+    PrivateSubnetRouteTableAssociation0:
+      Type: "AWS::EC2::SubnetRouteTableAssociation"
+      Properties:
+        SubnetId:
+          Ref: "PrivateSubnet0"
+        RouteTableId:
+          Ref: "PrivateRouteTable"
+
+    PrivateSubnetRouteTableAssociation1:
+      Type: "AWS::EC2::SubnetRouteTableAssociation"
+      Properties:
+        SubnetId:
+          Ref: "PrivateSubnet1"
+        RouteTableId:
+          Ref: "PrivateRouteTable"
+
+    LambdaSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        VpcId:
+          Ref: "VPC"
+        GroupDescription: Traffic from and to the Lambda
+        SecurityGroupEgress:
+          - IpProtocol: "-1"
+            CidrIp: 0.0.0.0/0
+
+    DBSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        VpcId:
+          Ref: "VPC"
+        GroupDescription: Open database for access from Lambda
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: '3306'
+            ToPort: '3306'
+            SourceSecurityGroupId:
+              Ref: "LambdaSecurityGroup"
+
+    DBSubnetGroup:
+      Type: AWS::RDS::DBSubnetGroup
+      Properties:
+        SubnetIds:
+          - Ref: "PrivateSubnet0"
+          - Ref: "PrivateSubnet1"
+        DBSubnetGroupDescription: "Subnet group from 2 different availability zones"
+
+    Database:
+      Type: AWS::RDS::DBInstance
+      Properties:
+        DBName: "operations"
+        DBSubnetGroupName:
+          Ref: "DBSubnetGroup"
+        AllocatedStorage: 10
+        DBInstanceClass: "db.t3.micro"
+        Engine: "mysql"
+        MasterUsername:
+          Ref: "DBMasterUser"
+        MasterUserPassword:
+          Ref: "DBMasterPassword"
+        Port: "3306"
+        Tags:
+          - Key: "Name"
+            Value: "Master Database"
+        VPCSecurityGroups:
+          - Ref: "DBSecurityGroup"
+
+    LambdaLayer:
+      Type: "AWS::Lambda::LayerVersion"
+      Properties:
+        CompatibleRuntimes:
+          - python3.10
+        Content:
+          S3Bucket: "ops-staging"
+          S3Key: "production/pymysql-layer.zip"
+        LayerName: "pymysql-layer"
+
+    ProductionLambda:
+      Type: 'AWS::Lambda::Function'
+      Properties:
+        Code:
+          S3Bucket: "ops-staging"
+          S3Key: "production/mysql-lambda.zip"
+        Handler: "lambda_function.lambda_handler"
+        Role: "arn:aws:iam::755727516965:role/sebastian-lambda-role"
+        Runtime: python3.10
+        Timeout: 30
+        FunctionName: 'production-lambda'
+        VpcConfig:
+          SecurityGroupIds:
+            - Ref: LambdaSecurityGroup
+          SubnetIds:
+            - Ref: PrivateSubnet0
+            - Ref: PrivateSubnet1
+        Layers:
+          - Ref: LambdaLayer
+
+    LambdaInvokePermission:
+      Type: 'AWS::Lambda::Permission'
+      Properties:
+        FunctionName: !GetAtt
+          - RotationLambda
+          - Arn
+        Action: 'lambda:InvokeFunction'
+        Principal: secretsmanager.amazonaws.com
+
+    LambdaIAMRole:
+      Type: 'AWS::IAM::Role'
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action:
+                - 'sts:AssumeRole'
+        Path: /
+        ManagedPolicyArns:
+          - "arn:aws:iam::755727516965:policy/DeveloperSecretsManagerFullAccess"
+          - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+
+    StripePassword:
+      Type: AWS::SecretsManager::Secret
+      Properties:
+            Description: Stripe password
+
+    StripePasswordResourcePolicy:
+      Type: AWS::SecretsManager::ResourcePolicy
+      Properties:
+        BlockPublicPolicy: True
+        SecretId:
+          Ref: StripePassword
+        ResourcePolicy:
+          Version: '2012-10-17'
+          Statement:
+          - Resource: "*"
+            Action: secretsmanager:GetSecret
+            Effect: Allow
+            Principal: "*"
+
+  Outputs:
+
+    VPCId:
+      Description: "VPCId of VPC"
+      Value:
+        Ref: "VPC"
+      Export:
+        Name: !Sub "${AWS::Region}-${AWS::StackName}-VPC"
+    DatabaseHost:
+      Description: "Hostname of the database"
+      Value: !GetAtt
+        - Database
+        - Endpoint.Address
+    ProductionLambdaARN:
+      Description: "ARN of the lambda function"
+      Value: !GetAtt
+        - ProductionLambda
+        - Arn

@@ -1,0 +1,16 @@
+{
+  "name": "snyk-example-repository",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "run": "node index.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "escape-html": "^1.0.3",
+    "express": "^4.18.2",
+    "semver": "^7.5.1"
+  }
+}
